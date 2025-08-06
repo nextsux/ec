@@ -1,0 +1,8 @@
+{
+  "name": "System76 Fan Controll",
+  "description": "Controlls PWM fan on system76 notebook",
+  "uuid": "pwmcontrol@system76",
+  "shell-version": [
+    "48"
+  ]
+}

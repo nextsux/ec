@@ -3,6 +3,65 @@
 System76 EC is a GPLv3 licensed embedded controller firmware for System76
 laptops.
 
+## Added support for gnome-shell manual fan controll
+
+### Build
+
+```sh
+cd tool
+cargo build
+sudo cp tool/target/debug/fan_control_service /usr/local/bin/fan_control_service
+```
+
+create a dbus config in `/etc/dbus-1/system.d/org.system76.FanControl.conf`
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <policy user="root">
+    <allow own="org.system76.FanControl"/>
+  </policy>
+  <policy context="default">
+    <allow send_destination="org.system76.FanControl"/>
+    <allow receive_sender="org.system76.FanControl"/>
+  </policy>
+</busconfig>
+```
+
+add systemd unit `/etc/systemd/system/fan-control.service`
+
+```plain
+[Unit]
+Description=System76 Fan Control Service
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/fan_control_service
+Type=simple
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+enable it:
+
+```sh
+systemctl daemon-reload
+systemctl enable fan-control.service
+systemctl start fan-control.service
+```
+
+install gnome-shell extension:
+
+```sh
+cp -a gnome-shell-extension ~/.local/share/gnome-shell/extensions/pwmcontrol@system76
+```
+
+reboot
+
 ## Documentation
 
 - [Supported embedded controllers](./docs/controllers.md)
