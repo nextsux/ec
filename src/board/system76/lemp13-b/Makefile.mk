@@ -17,7 +17,7 @@ CONFIG_SECURITY = y
 
 # Include keyboard
 KEYBOARD = 14in_83
-KEYMAP = darp10-b
+KEYMAP = ins-prtsc
 
 # Set keyboard LED mechanism
 CONFIG_HAVE_KBLED = y
