@@ -98,12 +98,29 @@ waits) in failure cases only; the healthy path adds a few register writes.
 
 ### Unverified assumption (check on first boot)
 
+VERIFIED on hardware 2026-09-14, see below. Kept for reference.
+
 IT5570E behavior of `ESC2CAC0` (0x3113) bits 0/1 is assumed identical to
 IT81202E/IT8xxx2 (NDA datasheet not available). If the bits read 0 during
 normal operation, the ready check would disable PECI entirely — immediately
 visible as `oob channel not ready` in the log every 250 ms plus 0 temperature
 from the first boot. Revert path: delete the `espi_oob_ready()` check; the
 rest of the fix does not depend on it. This cannot brick the EC.
+
+### Hardware verification (lemp13-b, 2026-09-14)
+
+ROM `2026-09-14_346d8ff` (fix + ins-prtsc keymap, container-built with SDCC
+4.2.0) flashed in-band over stock `2025-03-28_25772d2` (= ec `fdefd16` built
+via firmware-open `25772d2`; note firmware-open overrides the EC VERSION with
+its own date_rev and submodule dirt does not surface as `-dirty`). Result:
+boots normally, `sensors` shows CPU temperature immediately — the ESC2CAC0
+Enable/Ready check passes on real IT5570E, fan control works, and the
+renumbered fan-mode commands work with the patched fan_control_service
+(FanGetMode=23/FanSetMode=24, commit `8837cec` on `manual-fan-control`).
+Rollback images: `backup.rom` (byte-exact pre-flash dump, sha256 `9a9cace6…`)
+and `~/ec-stock-rollback-fdefd16.rom` (rebuilt equivalent, version string
+matched to stock). DP-unplug reproduction test: pending — the definitive
+check that the original bug is gone.
 
 ### Reading the log if it still misbehaves
 
