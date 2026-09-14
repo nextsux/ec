@@ -85,6 +85,10 @@ volatile uint8_t __xdata __at(0x3113) ESC2CAC0;
 volatile uint8_t __xdata __at(0x3112) ESC2CAC1;
 volatile uint8_t __xdata __at(0x3111) ESC2CAC2;
 volatile uint8_t __xdata __at(0x3110) ESC2CAC3;
+// OOB Message Channel Enable, set by the eSPI master
+#define ESC2CAC0_OOB_ENABLE BIT(0)
+// OOB Message Channel Ready, set when the slave accepts transactions
+#define ESC2CAC0_OOB_READY BIT(1)
 
 // Channel 3 capabilities and configurations
 volatile uint8_t __xdata __at(0x3117) ESC3CAC0;
@@ -114,6 +118,8 @@ volatile uint8_t __xdata __at(0x31A3) ESGCTRL3;
 volatile uint8_t __xdata __at(0x31B0) ESUCTRL0;
 #define ESUCTRL0_ENABLE BIT(7)
 #define ESUCTRL0_GO BIT(6)
+// Upstream channel disabled, set when a transaction targets a disabled channel
+#define ESUCTRL0_CH_DISABLED BIT(2)
 #define ESUCTRL0_DONE BIT(1)
 #define ESUCTRL0_BUSY BIT(0)
 
@@ -142,6 +148,8 @@ volatile uint8_t __xdata __at(0x31C1) ESOCTRL1;
 
 // PUT_OOB length
 volatile uint8_t __xdata __at(0x31C4) ESOCTRL4;
+// Length field, bits 6-0; bit 7 is reserved
+#define ESOCTRL4_LENGTH_MASK 0x7F
 
 // Virtual wires
 volatile uint8_t __xdata __at(0x3200) VWIDX0;

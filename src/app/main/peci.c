@@ -59,11 +59,30 @@ bool peci_available(void) {
 
 void peci_init(void) {}
 
+// Abort any in-progress upstream transaction and clear upstream status.
+// Disabling ENABLE is the only abort available to software: writes of zero to
+// GO are ignored by hardware. DONE and CH_DISABLED are write-one-clear.
+static void espi_upstream_abort(void) {
+    ESUCTRL0 = ESUCTRL0_DONE | ESUCTRL0_CH_DISABLED;
+}
+
+// Returns true if the OOB channel accepts transactions. The master enables
+// the channel and may reset it during error handling; starting an upstream
+// transaction while it is down risks stranding the engine. Accept either bit
+// in case Ready is not driven.
+static bool espi_oob_ready(void) {
+    return ESC2CAC0 & (ESC2CAC0_OOB_ENABLE | ESC2CAC0_OOB_READY);
+}
+
 // Returns true on success, false on error
 bool peci_get_temp(int16_t *const data) {
-    //TODO: Wait for completion?
-    // Clear upstream status
-    ESUCTRL0 = ESUCTRL0;
+    if (!espi_oob_ready()) {
+        DEBUG("peci_get_temp: oob channel not ready\n");
+        return false;
+    }
+
+    // Abort any transaction stranded by a previous timeout
+    espi_upstream_abort();
     // Clear OOB status
     ESOCTRL0 = ESOCTRL0;
 
@@ -91,20 +110,42 @@ bool peci_get_temp(int16_t *const data) {
     // PECI command
     UDB[7] = PECI_CMD_GET_TEMP;
 
-    // Set upstream enable
-    ESUCTRL0 |= ESUCTRL0_ENABLE;
-    // Set upstream go
-    ESUCTRL0 |= ESUCTRL0_GO;
+    // Set upstream enable, clearing status flags. GO must be written as zero:
+    // a write of one initiates a transaction even if the bit already reads as
+    // one from a stranded transaction.
+    ESUCTRL0 = ESUCTRL0_ENABLE | ESUCTRL0_DONE | ESUCTRL0_CH_DISABLED;
 
-    // Wait until upstream done
+    // Wait for the engine to become idle; an aborted transaction may still
+    // drain, and writes of one to GO are ignored while busy
     systick_t start = time_get();
-    while (!(ESUCTRL0 & ESUCTRL0_DONE)) {
+    while (ESUCTRL0 & ESUCTRL0_BUSY) {
         if ((time_get() - start) >= PECI_ESPI_TIMEOUT) {
-            DEBUG("peci_get_temp: upstream timeout\n");
+            DEBUG("peci_get_temp: upstream busy\n");
+            espi_upstream_abort();
             return false;
         }
     }
-    // Clear upstream done status
+
+    // Clear status that a drained transaction may have left behind
+    ESUCTRL0 = ESUCTRL0_ENABLE | ESUCTRL0_DONE | ESUCTRL0_CH_DISABLED;
+    // Set upstream go
+    ESUCTRL0 |= ESUCTRL0_GO;
+
+    // Wait until upstream done or the channel is disabled
+    start = time_get();
+    while (!(ESUCTRL0 & (ESUCTRL0_DONE | ESUCTRL0_CH_DISABLED))) {
+        if ((time_get() - start) >= PECI_ESPI_TIMEOUT) {
+            DEBUG("peci_get_temp: upstream timeout\n");
+            espi_upstream_abort();
+            return false;
+        }
+    }
+    if (ESUCTRL0 & ESUCTRL0_CH_DISABLED) {
+        DEBUG("peci_get_temp: channel disabled\n");
+        espi_upstream_abort();
+        return false;
+    }
+    // Clear upstream done status and disable initiating upstream transactions
     ESUCTRL0 = ESUCTRL0_DONE;
 
     // Wait for response
@@ -118,7 +159,7 @@ bool peci_get_temp(int16_t *const data) {
     }
 
     // Read response length
-    uint8_t len = ESOCTRL4;
+    uint8_t len = ESOCTRL4 & ESOCTRL4_LENGTH_MASK;
     if (len >= 7) {
         //TODO: verify packet type, handle PECI status
 
@@ -144,9 +185,13 @@ bool peci_get_temp(int16_t *const data) {
 // Returns positive completion code on success, negative completion code or
 // negative (0x1000 | status register) on PECI hardware error
 int16_t peci_wr_pkg_config(uint8_t index, uint16_t param, uint32_t data) {
-    //TODO: Wait for completion?
-    // Clear upstream status
-    ESUCTRL0 = ESUCTRL0;
+    if (!espi_oob_ready()) {
+        DEBUG("peci_wr_pkg_config: oob channel not ready\n");
+        return false;
+    }
+
+    // Abort any transaction stranded by a previous timeout
+    espi_upstream_abort();
     // Clear OOB status
     ESOCTRL0 = ESOCTRL0;
 
@@ -187,28 +232,48 @@ int16_t peci_wr_pkg_config(uint8_t index, uint16_t param, uint32_t data) {
     UDB[14] = (uint8_t)(data >> 16);
     UDB[15] = (uint8_t)(data >> 24);
 
-    // Set upstream enable
-    ESUCTRL0 |= ESUCTRL0_ENABLE;
-    // Set upstream go
-    ESUCTRL0 |= ESUCTRL0_GO;
+    // Set upstream enable, clearing status flags. GO must be written as zero:
+    // a write of one initiates a transaction even if the bit already reads as
+    // one from a stranded transaction.
+    ESUCTRL0 = ESUCTRL0_ENABLE | ESUCTRL0_DONE | ESUCTRL0_CH_DISABLED;
 
-    // Wait until upstream done
+    // Wait for the engine to become idle; an aborted transaction may still
+    // drain, and writes of one to GO are ignored while busy
     systick_t start = time_get();
-    while (!(ESUCTRL0 & ESUCTRL0_DONE)) {
-        DEBUG("peci_wr_pkg_config: wait upstream\n");
+    while (ESUCTRL0 & ESUCTRL0_BUSY) {
         if ((time_get() - start) >= PECI_ESPI_TIMEOUT) {
-            DEBUG("peci_wr_pkg_config: upstream timeout\n");
+            DEBUG("peci_wr_pkg_config: upstream busy\n");
+            espi_upstream_abort();
             return false;
         }
     }
-    // Clear upstream done status
+
+    // Clear status that a drained transaction may have left behind
+    ESUCTRL0 = ESUCTRL0_ENABLE | ESUCTRL0_DONE | ESUCTRL0_CH_DISABLED;
+    // Set upstream go
+    ESUCTRL0 |= ESUCTRL0_GO;
+
+    // Wait until upstream done or the channel is disabled
+    start = time_get();
+    while (!(ESUCTRL0 & (ESUCTRL0_DONE | ESUCTRL0_CH_DISABLED))) {
+        if ((time_get() - start) >= PECI_ESPI_TIMEOUT) {
+            DEBUG("peci_wr_pkg_config: upstream timeout\n");
+            espi_upstream_abort();
+            return false;
+        }
+    }
+    if (ESUCTRL0 & ESUCTRL0_CH_DISABLED) {
+        DEBUG("peci_wr_pkg_config: channel disabled\n");
+        espi_upstream_abort();
+        return false;
+    }
+    // Clear upstream done status and disable initiating upstream transactions
     ESUCTRL0 = ESUCTRL0_DONE;
 
     // Wait for response
     //TODO: do this asynchronously to avoid delays?
     start = time_get();
     while (!(ESOCTRL0 & ESOCTRL0_STATUS)) {
-        DEBUG("peci_wr_pkg_config: wait response\n");
         if ((time_get() - start) >= PECI_ESPI_TIMEOUT) {
             DEBUG("peci_wr_pkg_config: response timeout\n");
             return false;
@@ -216,7 +281,7 @@ int16_t peci_wr_pkg_config(uint8_t index, uint16_t param, uint32_t data) {
     }
 
     // Read response length
-    uint8_t len = ESOCTRL4;
+    uint8_t len = ESOCTRL4 & ESOCTRL4_LENGTH_MASK;
     if (len >= 6) {
         //TODO: verify packet type, handle PECI status
 
