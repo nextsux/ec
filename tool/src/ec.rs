@@ -32,8 +32,10 @@ enum Cmd {
     SetNoInput = 19,
     SecurityGet = 20,
     SecuritySet = 21,
-    FanGetMode = 22,
-    FanSetMode = 23,
+    // NOTE: renumbered upstream in EC firmware (0a294441, 2026-03): cmd 22 is
+    // now FanGetRpm. Matches EC builds from the fix/peci-espi-recovery branch on.
+    FanGetMode = 23,
+    FanSetMode = 24,
 }
 
 const CMD_SPI_FLAG_READ: u8 = 1 << 0;
