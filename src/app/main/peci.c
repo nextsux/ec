@@ -74,6 +74,37 @@ static bool espi_oob_ready(void) {
     return ESC2CAC0 & (ESC2CAC0_OOB_ENABLE | ESC2CAC0_OOB_READY);
 }
 
+// Diagnostic aid for the permanent PECI stall after display hotplug/suspend.
+// The upstream fix (5b187622) recovers the upstream engine, but the log still
+// shows the failure living entirely in the response (downstream) phase. To
+// tell a transient stall apart from the permanent one, dump the OOB engine
+// state once per fault episode, plus again whenever it changes, so the debug
+// log stays readable instead of flooding at the 250 ms cadence.
+static bool peci_faulted = false;
+static uint8_t peci_fault_snap[3] = { 0 };
+
+static void peci_fault_dump(void) {
+    uint8_t c2 = ESC2CAC0;
+    uint8_t us = ESUCTRL0;
+    uint8_t os = ESOCTRL0;
+    if (!peci_faulted || c2 != peci_fault_snap[0] || us != peci_fault_snap[1] ||
+        os != peci_fault_snap[2]) {
+        peci_faulted = true;
+        peci_fault_snap[0] = c2;
+        peci_fault_snap[1] = us;
+        peci_fault_snap[2] = os;
+        DEBUG("peci oob state: C2CAC0=%X USCTRL0=%X OSCTRL0=%X OSCTRL4=%X\n",
+            c2, us, os, ESOCTRL4);
+    }
+}
+
+static void peci_fault_clear(void) {
+    if (peci_faulted) {
+        peci_faulted = false;
+        DEBUG("peci: recovered\n");
+    }
+}
+
 // Returns true on success, false on error
 bool peci_get_temp(int16_t *const data) {
     if (!espi_oob_ready()) {
@@ -154,9 +185,17 @@ bool peci_get_temp(int16_t *const data) {
     while (!(ESOCTRL0 & ESOCTRL0_STATUS)) {
         if ((time_get() - start) >= PECI_ESPI_TIMEOUT) {
             DEBUG("peci_get_temp: response timeout\n");
+            peci_fault_dump();
+            // Leave both engines clean on the error path: disable upstream and
+            // write-one-clear the OOB status so a late-arriving response cannot
+            // strand the receiver.
+            espi_upstream_abort();
+            ESOCTRL0 = ESOCTRL0;
             return false;
         }
     }
+    // A response arrived: the OOB path is alive again
+    peci_fault_clear();
 
     // Read response length
     uint8_t len = ESOCTRL4 & ESOCTRL4_LENGTH_MASK;
@@ -276,9 +315,17 @@ int16_t peci_wr_pkg_config(uint8_t index, uint16_t param, uint32_t data) {
     while (!(ESOCTRL0 & ESOCTRL0_STATUS)) {
         if ((time_get() - start) >= PECI_ESPI_TIMEOUT) {
             DEBUG("peci_wr_pkg_config: response timeout\n");
+            peci_fault_dump();
+            // Leave both engines clean on the error path: disable upstream and
+            // write-one-clear the OOB status so a late-arriving response cannot
+            // strand the receiver.
+            espi_upstream_abort();
+            ESOCTRL0 = ESOCTRL0;
             return false;
         }
     }
+    // A response arrived: the OOB path is alive again
+    peci_fault_clear();
 
     // Read response length
     uint8_t len = ESOCTRL4 & ESOCTRL4_LENGTH_MASK;
