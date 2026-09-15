@@ -42,7 +42,51 @@ firmware-open branch pointing its `ec` submodule at this branch.
 - Sometimes the reading drops to 0 for a few seconds after plug/unplug and
   recovers by itself (transient variant of the same race).
 
-## Root cause
+## Hardware verdict (2026-09-15): host-side, NOT the EC
+
+Proven on lemp13-b by flashing an instrumented ROM
+(`2026-09-14_646c703-dirty`, sha256 `2b4b89ce…`) that dumps the eSPI OOB
+engine registers on every `response timeout` (one line per distinct state).
+Reproduced with USB-C/TBT DP **monitor suspend + wake**; full log in `lastlog2`.
+
+In the permanent stall the EC OOB engine is **completely healthy** and the dump
+line never changes across 130+ consecutive timeouts:
+
+```
+peci oob state: C2CAC0=13 USCTRL0=0 OSCTRL0=0 OSCTRL4=6
+```
+
+- `C2CAC0=0x13`: OOB channel ENABLE(b0)=1 **and READY(b1)=1** — channel is up.
+- `USCTRL0=0x00`: upstream ENABLE/GO/CH_DISABLED/DONE/**BUSY all 0** — the
+  upstream engine is idle and clean, not stranded.
+- `OSCTRL0=0x00`: PUT_OOB STATUS=0 — no downstream response arrived.
+
+Decisive point: the **transient (recoverable) and permanent stalls are
+register-identical** (`C2CAC0=13 USCTRL0=0 OSCTRL0=0`; a transient one even
+caught `OSCTRL0=80`, STATUS=1, a response landing right at the 10 ms edge). So
+from the EC's registers there is *no difference* between "will recover" and
+"stuck forever," and **there is no EC-side state to reset.** The EC transmits
+the request (upstream DONE fires, no upstream error), the channel stays
+enabled+ready, and the **PCH simply stops sending the downstream PUT_OOB PECI
+response.** Transient = PCH answers slowly (~10 ms, occasionally a short
+`len 6 < 7`); permanent = PCH never answers.
+
+This **refutes every EC-side theory**, including the one the fix below was built
+on (upstream stranding), plus RX re-arm and the ready-check OR-logic — all read
+healthy. It is why flashing the fix did not change the symptoms. `warm reboot
+doesn't help, only cold power-off does` is *consistent* with a PCH/Thunderbolt
+side wedge (a warm reset does not reset the PCH eSPI-OOB / TBT controller
+state); it is **not** evidence of an EC-side latch as previously assumed.
+
+Root cause therefore lives host-side: PCH PECI-over-eSPI responder, coreboot
+eSPI OOB channel configuration, or an Intel erratum around PECI-over-eSPI with
+TBT/DP hotplug. Trigger is the USB-C/TBT DP path (monitor suspend/resume,
+hotplug). An upstream report exists (issues #369 / #525) but is unattended. Next
+work belongs in coreboot / the BIOS+EC pairing, not in `peci.c`.
+
+Do not re-attempt EC-register recovery for this bug — the engine is not stuck.
+
+## Root cause (original theory — REFUTED on hardware, see verdict above)
 
 Trigger: during TBT/DP hotplug the PCH briefly fails to complete the EC's
 in-flight eSPI OOB upstream transaction (host busy in SMI/hotplug handling, or
@@ -128,8 +172,9 @@ check that the original bug is gone.
   never accepts the pending cycle; would need link-level recovery (deliberate
   next step, evidence-based — not implemented).
 - persistent `response timeout` (upstream phase OK) → PCH answers OOB not at
-  all; host-side issue. EC now keeps retrying cleanly and recovers when the
-  host does.
+  all. Confirmed on hardware to be a **host-side** wedge that the EC cannot
+  clear (see "Hardware verdict" above); the EC engine reads healthy throughout.
+  It does NOT reliably recover on its own — this is the actual lemp13-b failure.
 - persistent `channel disabled` / `oob channel not ready` → host holds the
   OOB channel down.
 

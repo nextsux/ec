@@ -1,3 +1,24 @@
+# ⛔️⛔️⛔️ STOP — DO NOT USE THIS BRANCH ⛔️⛔️⛔️
+
+# 🚧 PLAYGROUND / WORK IN PROGRESS 🚧
+
+# 🔥 THE FIX ON THIS BRANCH IS **NOT** READY FOR DEPLOYMENT 🔥
+
+> ## ❗ THIS IS A DEBUGGING FORK — `fix/peci-espi-recovery` ❗
+>
+> ## ❗ DO NOT FLASH THIS ONTO A REAL MACHINE EXPECTING A FIX ❗
+>
+> ## ❗ THE PECI-OVER-eSPI ISSUE IS **NOT SOLVED** — IT IS BEING INVESTIGATED ❗
+>
+> We are actively investigating the PECI-over-eSPI stall on lemp13-b. Hardware
+> evidence shows the root cause is **host-side (PCH / coreboot / Thunderbolt),
+> NOT the EC firmware** — see [`docs/peci-over-espi-notes.md`](./docs/peci-over-espi-notes.md).
+> Commits here contain diagnostic instrumentation and abandoned EC-side theories.
+> **Nothing here is a shippable fix.** Use the upstream `master` of
+> `system76/ec` for anything real.
+
+---
+
 # System76 EC
 
 System76 EC is a GPLv3 licensed embedded controller firmware for System76
