@@ -86,6 +86,40 @@ work belongs in coreboot / the BIOS+EC pairing, not in `peci.c`.
 
 Do not re-attempt EC-register recovery for this bug — the engine is not stuck.
 
+### Corroborating upstream findings (issues #369 / #525)
+
+- **It is Thunderbolt-specific.** Maintainer (crawfxrd): `addw4` uses
+  PECI-over-eSPI but has **no TBT** and does **not** exhibit the bug; the other
+  affected boards (lemp13, lemp13-b, oryp11, oryp12) all route DP over TBT.
+  Trigger is the USB-C/TBT DP path — unplug, hotplug, or display suspend.
+  (Reported worse with some monitors, e.g. Philips/Samsung USB-C.)
+- **The disruption is not PECI-only.** heydemo (2026-06-11, stock
+  `2025-07-24_c242738`): right after PECI dies, `SMFI` host commands also fail
+  intermittently (`Protocol(1)`) for a few minutes, then SMFI recovers while
+  PECI never does. So a TBT event briefly perturbs the whole eSPI host
+  interface; only the **OOB channel** fails to re-establish. Consistent with our
+  register verdict (EC side healthy, PCH-side OOB responder wedged).
+- **Real thermal impact.** With PECI dead the fan curve never engages: CPU sits
+  pinned at PROCHOT (pkg 95–99 °C, fan 0 RPM) until cold power-off. Only CPU
+  self-throttling protects the silicon.
+
+### Candidate fix at the right place
+
+- **Bypass the fragile transport — use legacy H_PECI on lemp13-b.** The board
+  physically wires the dedicated PECI pin (`GPF6`/`H_PECI`, currently `GPIO_ALT`
+  but the controller is disabled via `GCR2=0` in favor of eSPI). Legacy PECI is
+  a direct EC↔CPU wire that does **not** touch the PCH eSPI OOB channel, so it
+  should be immune to the TBT/OOB disruption. Open question (see #370): does the
+  Meteor Lake CPU still answer on the dedicated PECI wire, or was eSPI chosen
+  because the pin path needs coreboot/FSP support that is not present? Testable:
+  build lemp13-b with `CONFIG_PECI_OVER_ESPI` off and check both that temps read
+  AND that the TBT-unplug repro no longer kills them. This is the most promising
+  concrete lever we control.
+- **Host-side (coreboot/FSP/Intel).** If legacy PECI is not viable, the real fix
+  is re-establishing the eSPI OOB channel after a TBT disruption — coreboot eSPI
+  OOB config, FSP, or an Intel PECI-over-eSPI + TBT erratum. Likely outside the
+  EC repo entirely.
+
 ## Root cause (original theory — REFUTED on hardware, see verdict above)
 
 Trigger: during TBT/DP hotplug the PCH briefly fails to complete the EC's
